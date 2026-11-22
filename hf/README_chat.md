@@ -36,8 +36,7 @@ CPU fp32 로 돌릴 수 있다 (가중치 4.4GB, 증분 생성). 문맥 길이 5
 
 ```bash
 python -m bitgc.engine.build
-python scripts/export_engine.py --ckpt hf:trace-000/bitgc-lm-1b --out bitgc_1b.npz --tokenizer tokenizer.model --parity
-python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model
+python chat.py --engine hf:trace-000/bitgc-lm-1b          # bitgc_1b_engine.npz (411MB) 와 토크나이저만 받는다
 ```
 
 ## 학습

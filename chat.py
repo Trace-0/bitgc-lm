@@ -4,7 +4,7 @@
   python chat.py --ckpt … --tokenizer … --prompt "프랑스의 수도는 어디야?"                     # 한 번
   python chat.py --ckpt … --tokenizer … --prompt "…" --compare-gate                           # 게이트 있음/없음 나란히
   python chat.py --ckpt … --tokenizer … --text "옛날 옛적에"                                   # 대화 형식 없이 이어 쓰기
-  python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model                            # 정수 엔진 (CPU, 빠름)
+  python chat.py --engine hf:trace-000/bitgc-lm-1b                                            # 정수 엔진 (CPU, 빠름, 411MB 만 받는다)
 
 대화 명령: /reset (대화 비우기) · /gate on|off · /quit
 """
@@ -30,7 +30,7 @@ if hasattr(sys.stdin, "reconfigure"):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ckpt", default="", help=".pt · save_pretrained 폴더 · hf:사용자/저장소 (PyTorch 추론)")
-    ap.add_argument("--engine", default="", help="정수 엔진 자산 .npz (scripts/export_engine.py) — CPU 에서 빠르다")
+    ap.add_argument("--engine", default="", help="정수 엔진 자산 .npz (scripts/export_engine.py) 또는 hf:사용자/저장소 — CPU 에서 빠르다")
     ap.add_argument("--tokenizer", default="", help="비우면 체크포인트 폴더의 tokenizer.model")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--bf16", action="store_true", help="GPU 에서 bf16 autocast (기본 fp32 — 평가와 같은 경로)")
@@ -49,6 +49,11 @@ def main():
     assert bool(a.ckpt) != bool(a.engine), "--ckpt 와 --engine 중 하나만"
 
     import sentencepiece as spm
+    if a.engine.startswith("hf:"):              # 엔진 자산과 토크나이저만 받는다 (fp32 가중치 4.4GB 는 받지 않는다)
+        from huggingface_hub import hf_hub_download
+        repo = a.engine[3:]
+        a.engine = hf_hub_download(repo, "bitgc_1b_engine.npz")
+        a.tokenizer = a.tokenizer or hf_hub_download(repo, "tokenizer.model")
     a.tokenizer = a.tokenizer or (tokenizer_path(a.ckpt) if a.ckpt else "")
     assert a.tokenizer, "--tokenizer 가 필요하다 (체크포인트 폴더에 tokenizer.model 없음)"
     sp = spm.SentencePieceProcessor(model_file=a.tokenizer)

@@ -117,7 +117,7 @@ chat.py   ── 불러올 때 기록대로 게이트를 건다 (--compare-gate 
 
 | 모델 | 설명 |
 |---|---|
-| [**trace-000/bitgc-lm-1b**](https://huggingface.co/trace-000/bitgc-lm-1b) | 대화·지시 모델. 회상 층(블록 11) 게이트 포함 |
+| [**trace-000/bitgc-lm-1b**](https://huggingface.co/trace-000/bitgc-lm-1b) | 대화·지시 모델. 회상 층(블록 11) 게이트 포함. 정수 엔진 자산 `bitgc_1b_engine.npz` 도 함께 |
 | [trace-000/bitgc-lm-1b-base](https://huggingface.co/trace-000/bitgc-lm-1b-base) | 사전학습 모델. 직접 SFT 할 때 쓴다 |
 
 ```bash
@@ -131,7 +131,7 @@ KV 캐시와 conv 상태를 이어 쓰는 증분 생성이라 CPU 에서도 돌�
 함께 들어 있습니다. 디코딩 기본값은 논문의 최종 평가 설정을 따릅니다: greedy · 반복 벌점 1.2 · 같은 6-gram 금지.
 
 ```
-$ python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model --prompt "김치찌개 맛있게 끓이는 방법 알려줘" --compare-gate
+$ python chat.py --engine hf:trace-000/bitgc-lm-1b --prompt "김치찌개 맛있게 끓이는 방법 알려줘" --compare-gate
 [게이트 켬] 김치찌개에 대해 궁금하시군요.
 [게이트 끔] 김치찌개 맛있게 끓이는 방법          ← 회상 층이 질문 첫머리를 그대로 베낀다
 ```
@@ -143,9 +143,11 @@ $ python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model --prompt "김
 
 ```bash
 python -m bitgc.engine.build                                                     # 한 번 (Linux · WSL · macOS, gcc/clang)
-python scripts/export_engine.py --ckpt hf:trace-000/bitgc-lm-1b --out bitgc_1b.npz --tokenizer tokenizer.model --parity
-python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model                 # 대화
+python chat.py --engine hf:trace-000/bitgc-lm-1b                                 # 공개 엔진 자산(411MB)을 받아 대화
 python scripts/bench_engine.py --engine bitgc_1b.npz                             # 속도
+
+# 직접 학습한 모델은 엔진 자산으로 내보낸다 (--parity: torch 와 정합 확인)
+python scripts/export_engine.py --ckpt runs/1b/instr.pt --out my_engine.npz --tokenizer tokenizer/my_spm.model --parity
 ```
 
 | 1B 최종 모델 (16스레드 CPU, 같은 세션) | 결과 |
