@@ -32,6 +32,14 @@ python chat.py --ckpt hf:trace-000/bitgc-lm-1b --prompt "프랑스의 수도는 
 
 CPU fp32 로 돌릴 수 있다 (가중치 4.4GB, 증분 생성). 문맥 길이 512 토큰.
 
+정수 엔진 (삼진 × int8, 곱셈 없는 CPU 생성, 자산 411MB · 16스레드에서 ~7 ms/토큰):
+
+```bash
+python -m bitgc.engine.build
+python scripts/export_engine.py --ckpt hf:trace-000/bitgc-lm-1b --out bitgc_1b.npz --tokenizer tokenizer.model --parity
+python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model
+```
+
 ## 학습
 
 | 단계 | 데이터 | 설정 |
