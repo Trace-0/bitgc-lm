@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pt
+*.bin
+*.meta.json
+runs/
+data/
+*.log
+.pytest_cache/
+tokenizer/*.model
+tokenizer/*.vocab

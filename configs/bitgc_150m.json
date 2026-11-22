@@ -1,0 +1,5 @@
+{
+  "d_model": 1024, "n_heads": 16, "n_layers": 12, "d_ff": 4096, "seq_len": 512,
+  "attn_layers": [3, 7, 11], "conv_kernel": 9, "conv_dilate": false,
+  "ffn_act": "relu2", "rscale": true
+}

@@ -1,0 +1,5 @@
+torch>=2.4
+sentencepiece>=0.2
+numpy
+safetensors
+huggingface_hub   # 'hf:' 경로로 받을 때만
