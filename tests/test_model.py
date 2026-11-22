@@ -116,6 +116,42 @@ def test_probe_runs():
     assert rec["gate_layers"] == [rec["layer"]] and len(rec["history"]) == 2
 
 
+def test_engine_matches_torch():
+    """정수 엔진 (빌드돼 있을 때만): 게이트 포함 내보내기 → prefill·한 토큰씩 모두 torch 와 top-1 대부분 일치."""
+    from bitgc.engine.runtime import LIB_NAME
+    if not os.path.exists(os.path.join(_ROOT, "bitgc", "engine", LIB_NAME)) and not os.environ.get("BITGC_ENGINE_LIB"):
+        print("  (엔진 라이브러리 없음 — python -m bitgc.engine.build 뒤에 시험)")
+        return
+    import numpy as np
+    sys.path.insert(0, os.path.join(_ROOT, "scripts"))
+    from export_engine import export
+    from bitgc.engine.runtime import GenLM
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=512, d_model=256, n_heads=4, n_layers=4, d_ff=512, seq_len=64,
+                      attn_layers=(1, 3), dropout=0.0)          # 엔진은 d_model·d_ff 가 256 의 배수
+    net = BitGCLM(cfg).eval()
+    net.set_recall_gate([3], BOT)
+    x = torch.randint(7, 512, (1, 40))
+    x[0, 20] = x[0, 30] = BOT
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "e.npz")
+        export(net, p, {"layer": 3, "token": BOT})
+        eng = GenLM(p)
+        with torch.no_grad():
+            ref = net(x)[0].numpy()
+        pre = eng.forward(x[0].tolist())
+        eng.reset()
+        inc = np.stack([eng.step(int(t)) for t in x[0]])
+    for g in (pre, inc):
+        agree = (ref.argmax(1) == g.argmax(1)).mean()
+        assert agree > 0.95 and np.abs(ref - g).max() < 0.1, (agree, np.abs(ref - g).max())
+    # 게이트가 엔진에서도 걸렸는지: 게이트 없는 torch 와는 응답 표지 위치에서 달라야 한다
+    net.gate_on = False
+    with torch.no_grad():
+        nog = net(x)[0].numpy()
+    assert np.abs(nog[30] - pre[30]).max() > 10 * np.abs(ref[30] - pre[30]).max()
+
+
 if __name__ == "__main__":
     for k, f in list(globals().items()):
         if k.startswith("test_"):

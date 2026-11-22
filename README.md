@@ -45,9 +45,10 @@ response-start gate that the probe's result drives. Weights: [trace-000/bitgc-lm
   int8 로 양자화한 Transformer 와 비교해도 4배 빠릅니다.
 - **대화·지시**: 회상 층 게이트(아래)로 지시 따르기 126문항 정답이 **55.7 → 75.0** 으로 올랐습니다 (게이트가 없는 이전 설계와 비교, 시드 3개 평균).
 
-¹ 속도·에너지는 원 연구의 C 정수 엔진에서 잰 값입니다 (배치 1, 모든 모델을 같은 엔진으로 실행). **이 엔진은 아직 이
-저장소에 포함하지 않았습니다.** 이 저장소의 PyTorch 추론은 같은 수식을 쓰지만 이 속도는 나오지 않습니다.
-BitGC 줄은 최종 모델의 바로 앞 설계(E1c)에서 잰 값입니다. 최종 모델도 크기와 커널이 같아서, 같은 세션에서 잰 차이가 측정 폭 안이었습니다.
+¹ 속도·에너지는 이 저장소에 들어 있는 **C 정수 엔진**(`bitgc/engine`, 아래 「정수 엔진」)으로 잰 원 연구의 값입니다.
+배치 1이고, 모든 모델을 같은 엔진으로 실행했습니다. BitGC 줄은 최종 모델의 바로 앞 설계(E1c)에서 잰 값입니다.
+최종 모델은 크기와 커널이 같아서, 같은 세션에서 잰 차이가 측정 폭 안이었습니다. 절대값은 CPU와 측정 세션에 따라 달라집니다.
+이 저장소의 엔진은 같은 세션에서 원 연구 엔진과 같은 속도를 냈습니다(6.7 대 6.6 ms/토큰).
 
 ## 왜 이 구조인가
 
@@ -129,6 +130,34 @@ python chat.py --ckpt hf:trace-000/bitgc-lm-1b-base --text "옛날 옛적에" --
 KV 캐시와 conv 상태를 이어 쓰는 증분 생성이라 CPU 에서도 돌아갑니다 (`--bf16` 은 GPU 용). 토크나이저는 모델 저장소에
 함께 들어 있습니다. 디코딩 기본값은 논문의 최종 평가 설정을 따릅니다: greedy · 반복 벌점 1.2 · 같은 6-gram 금지.
 
+```
+$ python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model --prompt "김치찌개 맛있게 끓이는 방법 알려줘" --compare-gate
+[게이트 켬] 김치찌개에 대해 궁금하시군요.
+[게이트 끔] 김치찌개 맛있게 끓이는 방법          ← 회상 층이 질문 첫머리를 그대로 베낀다
+```
+
+## 정수 엔진 — CPU 에서 빠르게
+
+`bitgc/engine` 은 삼진 가중치 × 8bit 활성 행렬곱을 **곱셈 없이** 하는 C 엔진입니다(OpenMP, AVX2 / AVX-512 VNNI).
+한 토큰을 C 함수 하나로 처리하고, KV 캐시와 conv 링 버퍼를 안에서 관리합니다. 회상 층 게이트도 엔진 안에서 걸립니다.
+
+```bash
+python -m bitgc.engine.build                                                     # 한 번 (Linux · WSL · macOS, gcc/clang)
+python scripts/export_engine.py --ckpt hf:trace-000/bitgc-lm-1b --out bitgc_1b.npz --tokenizer tokenizer.model --parity
+python chat.py --engine bitgc_1b.npz --tokenizer tokenizer.model                 # 대화
+python scripts/bench_engine.py --engine bitgc_1b.npz                             # 속도
+```
+
+| 1B 최종 모델 (16스레드 CPU, 같은 세션) | 결과 |
+|---|---|
+| 엔진 자산 | 411MB (삼진 가중치 264MB) — fp32 가중치 4.4GB 의 1/10 |
+| 생성 속도 | 6.7 ms/토큰 (문맥 64) · 8.0 ms/토큰 (문맥 448). 원 연구 엔진도 같은 세션에서 6.6 · 7.9 |
+| torch 와의 정합 | top-1 98~99%, 응답 표지 위치 100%, NLL 차이 0.013 이하 (8bit 반올림 경계 때문에 완전히 같지는 않다) |
+| 지시 따르기 126문항 | 73점 · 원 연구 엔진 출력과 **126/126 같은 답** (126문항에 23초) |
+
+fc2 는 열 단위로 저장해서, ReLU² 출력이 0 인 입력의 열은 읽지 않습니다. 엔진은 d_model · d_ff 가 256 의 배수여야 합니다
+(`configs/` 의 세 설정은 모두 맞습니다). Windows 에서는 WSL 에서 빌드·실행하세요.
+
 ## 직접 만들기
 
 크기별 설정은 `configs/` 에 있습니다. 층 수와 attention 위치는 인자로 바꿀 수 있습니다 (`--n-layers 12 --attn-layers 3,7,11`).
@@ -190,9 +219,10 @@ bitgc/model.py         모델 (BitLinear · 게이트 conv · attention · ReLU�
 bitgc/recall_probe.py  회상 층 측정 (연상 회상 · 유도 복사) 과 판정 추적기
 bitgc/generate.py      증분 생성 · 대화 형식 · 디코딩 규칙
 bitgc/checkpoint.py    체크포인트 형식 (.pt / safetensors 폴더 / hf:)
+bitgc/engine/          C 정수 엔진 (csrc/ 커널 · runtime.py · build.py)
 train.py · sft.py · chat.py
-scripts/               토크나이저 · 데이터 준비 · 회상 측정 · 내보내기 · 원 연구 체크포인트 변환
-tests/test_model.py    증분 생성 = 전체 계산, 게이트는 응답 위치만, 저장·복원 (CPU 몇 초)
+scripts/               토크나이저 · 데이터 준비 · 회상 측정 · 내보내기(safetensors · 엔진) · 엔진 속도 · 원 연구 체크포인트 변환
+tests/test_model.py    증분 생성 = 전체 계산 · 게이트는 응답 위치만 · 저장·복원 · 엔진 = torch (CPU 몇 초)
 ```
 
 ## 한계

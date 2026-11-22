@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 
@@ -63,24 +64,11 @@ class Generator:
     @torch.no_grad()
     def generate(self, ids, max_new=128, temperature=0.0, top_k=0, rep=1.2, no_repeat=6,
                  chat_rules=True, stop_ids=None, seed=0, stream=None) -> list[int]:
-        net, dev = self.net, self.device
         stop = set(stop_ids or ()) | {self.sp.eos_id(), self.end}
         g = torch.Generator(device="cpu").manual_seed(seed)
         ids = list(ids)
         out: list[int] = []
-        caches, pos = None, 0
-
-        def prefill(seq):
-            nonlocal caches, pos
-            seq = seq[-(self.T - 1):]            # 생성할 자리를 하나 남긴다
-            caches = net.new_caches()
-            x = torch.tensor([seq], device=dev)
-            with self._ac():
-                lg = net(x, caches=caches, pos0=0)[0, -1].float()
-            pos = len(seq)
-            return lg
-
-        lg = prefill(ids)
+        lg = self._prefill(ids)
         for _ in range(max_new):
             v = lg.clone()
             if rep != 1.0 and out:
@@ -107,14 +95,58 @@ class Generator:
             if stream is not None:
                 stream(nx)
             ids.append(nx)
-            if pos >= self.T:                    # 위치 임베딩 끝 — 뒤쪽 문맥으로 다시 채운다
-                lg = prefill(ids)
+            if self.pos >= self.T:               # 위치 임베딩 끝 — 뒤쪽 문맥으로 다시 채운다
+                lg = self._prefill(ids)
                 continue
-            x = torch.tensor([[nx]], device=dev)
-            with self._ac():
-                lg = net(x, caches=caches, pos0=pos)[0, -1].float()
-            pos += 1
+            lg = self._step(nx)
         return out
+
+    # ── 백엔드 (torch). EngineGenerator 는 이 두 개만 바꾼다 ──
+    @torch.no_grad()
+    def _prefill(self, seq) -> torch.Tensor:
+        seq = seq[-(self.T - 1):]                # 생성할 자리를 하나 남긴다
+        self.caches = self.net.new_caches()
+        x = torch.tensor([seq], device=self.device)
+        with self._ac():
+            lg = self.net(x, caches=self.caches, pos0=0)[0, -1].float()
+        self.pos = len(seq)
+        return lg
+
+    @torch.no_grad()
+    def _step(self, tok) -> torch.Tensor:
+        x = torch.tensor([[tok]], device=self.device)
+        with self._ac():
+            lg = self.net(x, caches=self.caches, pos0=self.pos)[0, -1].float()
+        self.pos += 1
+        return lg
 
     def reply(self, turns, fmt: str = "eval", **kw) -> str:
         return self.sp.decode(self.generate(self.chat_ids(turns, fmt), **kw))
+
+
+class EngineGenerator(Generator):
+    """같은 디코딩 규칙을 정수 엔진(bitgc.engine.runtime.GenLM)으로. net 은 설정(seq_len)만 쓴다 — 가중치는 엔진 자산에."""
+
+    def __init__(self, eng, sp):
+        self.eng, self.sp, self.device, self.dtype = eng, sp, "cpu", None
+        self.T = eng.seq_len
+        pid = sp.piece_to_id
+        self.user, self.bot, self.end = pid("<|user|>"), pid("<|bot|>"), pid("<|end|>")
+        self.bare = pid("▁")
+        self.net = None
+
+    def logits(self, ids):
+        self.eng.reset()
+        return torch.from_numpy(self.eng.forward(ids[-self.T:], last_only=True).copy())
+
+    def _prefill(self, seq):
+        seq = seq[-(self.T - 1):]
+        self.eng.reset()
+        lg = self.eng.forward(seq, last_only=True)
+        self.pos = len(seq)
+        return torch.from_numpy(np.asarray(lg, np.float32).copy())
+
+    def _step(self, tok):
+        lg = self.eng.step(int(tok))
+        self.pos += 1
+        return torch.from_numpy(lg)

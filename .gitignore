@@ -9,3 +9,6 @@ data/
 .pytest_cache/
 tokenizer/*.model
 tokenizer/*.vocab
+*.so
+*.dylib
+*.npz
